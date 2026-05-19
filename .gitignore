@@ -1,0 +1,44 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor/IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+
+# Go / backend
+backend/bin/
+backend/coverage.out
+backend/*.test
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and temp files
+*.tmp
+*.temp
+tmp/
+temp/

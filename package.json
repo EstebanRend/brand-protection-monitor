@@ -1,0 +1,12 @@
+{
+  "name": "brand-protection-monitor",
+  "private": true,
+  "scripts": {
+    "mig:new": "node scripts/migrate.mjs new",
+    "mig:up": "node scripts/migrate.mjs up",
+    "mig:down": "node scripts/migrate.mjs down",
+    "mig:version": "node scripts/migrate.mjs version",
+    "mig:force": "node scripts/migrate.mjs force",
+    "mig:help": "node scripts/migrate.mjs help"
+  }
+}

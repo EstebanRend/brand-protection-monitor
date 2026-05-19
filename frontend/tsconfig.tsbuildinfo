@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/api/client.ts","./src/components/keywordmanager.tsx","./src/components/matchestable.tsx","./src/components/monitorstatuscard.tsx","./src/types/models.ts"],"errors":true,"version":"6.0.3"}
