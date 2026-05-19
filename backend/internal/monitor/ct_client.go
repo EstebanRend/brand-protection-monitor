@@ -5,14 +5,18 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type CTClient struct {
 	baseURL    string
 	httpClient *http.Client
+	maxRetries int
+	retryDelay time.Duration
 }
 
 type signedTreeHeadResponse struct {
@@ -29,30 +33,25 @@ type ctEntry struct {
 }
 
 func NewCTClient(baseURL string) *CTClient {
+	return NewCTClientWithTimeout(baseURL, 30*time.Second)
+}
+
+func NewCTClientWithTimeout(baseURL string, timeout time.Duration) *CTClient {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
 	return &CTClient{
 		baseURL:    normalizeCTBaseURL(baseURL),
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: timeout},
+		maxRetries: 2,
+		retryDelay: 300 * time.Millisecond,
 	}
 }
 
 func (c *CTClient) GetTreeSize(ctx context.Context) (int64, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/get-sth", nil)
-	if err != nil {
-		return 0, err
-	}
-
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return 0, err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return 0, fmt.Errorf("get-sth failed with status %d", response.StatusCode)
-	}
-
 	var payload signedTreeHeadResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := c.doJSONRequestWithRetry(ctx, c.baseURL+"/get-sth", &payload); err != nil {
 		return 0, err
 	}
 
@@ -61,23 +60,8 @@ func (c *CTClient) GetTreeSize(ctx context.Context) (int64, error) {
 
 func (c *CTClient) GetCertificates(ctx context.Context, start int64, end int64) ([]*x509.Certificate, error) {
 	url := fmt.Sprintf("%s/get-entries?start=%d&end=%d", c.baseURL, start, end)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("get-entries failed with status %d", response.StatusCode)
-	}
-
 	var payload getEntriesResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := c.doJSONRequestWithRetry(ctx, url, &payload); err != nil {
 		return nil, err
 	}
 
@@ -90,6 +74,76 @@ func (c *CTClient) GetCertificates(ctx context.Context, start int64, end int64) 
 	}
 
 	return certificates, nil
+}
+
+func (c *CTClient) doJSONRequestWithRetry(ctx context.Context, url string, out any) error {
+	var lastErr error
+	attempts := c.maxRetries + 1
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return err
+		}
+
+		response, err := c.httpClient.Do(request)
+		if err != nil {
+			lastErr = err
+			if attempt < c.maxRetries {
+				if waitErr := c.waitBeforeRetry(ctx, attempt); waitErr != nil {
+					return waitErr
+				}
+				continue
+			}
+			return err
+		}
+
+		func() {
+			defer response.Body.Close()
+			if response.StatusCode < 200 || response.StatusCode >= 300 {
+				lastErr = fmt.Errorf("ct request failed with status %d", response.StatusCode)
+				return
+			}
+			lastErr = json.NewDecoder(response.Body).Decode(out)
+		}()
+
+		if lastErr == nil {
+			return nil
+		}
+
+		if !shouldRetryStatus(response.StatusCode) || attempt >= c.maxRetries {
+			return lastErr
+		}
+
+		if waitErr := c.waitBeforeRetry(ctx, attempt); waitErr != nil {
+			return waitErr
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("ct request failed")
+	}
+	return lastErr
+}
+
+func shouldRetryStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= 500
+}
+
+func (c *CTClient) waitBeforeRetry(ctx context.Context, attempt int) error {
+	delay := c.retryDelay * time.Duration(attempt+1)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func parseCertificateFromExtraData(extraData string) (*x509.Certificate, error) {

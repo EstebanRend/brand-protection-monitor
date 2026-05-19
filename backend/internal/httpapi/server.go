@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -18,15 +20,27 @@ type Server struct {
 	certificateRepo *certificates.Repository
 	stateRepo       *monitor.StateRepository
 	monitorService  *monitor.Service
+	allowedOrigins  map[string]struct{}
 }
 
-func NewServer(keywordRepo *keywords.Repository, certificateRepo *certificates.Repository, stateRepo *monitor.StateRepository, monitorService *monitor.Service) *Server {
-	return &Server{keywordRepo: keywordRepo, certificateRepo: certificateRepo, stateRepo: stateRepo, monitorService: monitorService}
+func NewServer(keywordRepo *keywords.Repository, certificateRepo *certificates.Repository, stateRepo *monitor.StateRepository, monitorService *monitor.Service, allowedOrigins []string) *Server {
+	originSet := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		originSet[origin] = struct{}{}
+	}
+
+	return &Server{
+		keywordRepo:     keywordRepo,
+		certificateRepo: certificateRepo,
+		stateRepo:       stateRepo,
+		monitorService:  monitorService,
+		allowedOrigins:  originSet,
+	}
 }
 
 func (s *Server) Router() http.Handler {
 	router := mux.NewRouter()
-	router.Use(corsMiddleware)
+	router.Use(s.corsMiddleware)
 
 	router.HandleFunc("/health", s.health).Methods(http.MethodGet)
 	router.HandleFunc("/api/keywords", s.listKeywords).Methods(http.MethodGet)
@@ -50,7 +64,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listKeywords(w http.ResponseWriter, r *http.Request) {
 	items, err := s.keywordRepo.List(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to list keywords", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
@@ -74,7 +88,7 @@ func (s *Server) createKeyword(w http.ResponseWriter, r *http.Request) {
 
 	item, err := s.keywordRepo.Create(r.Context(), request.Value)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to create keyword", err)
 		return
 	}
 
@@ -90,7 +104,7 @@ func (s *Server) deleteKeyword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.keywordRepo.Delete(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to delete keyword", err)
 		return
 	}
 
@@ -100,7 +114,7 @@ func (s *Server) deleteKeyword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
 	items, err := s.certificateRepo.List(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to list matches", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
@@ -109,7 +123,7 @@ func (s *Server) listMatches(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 	state, err := s.stateRepo.Get(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to get monitor status", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
@@ -117,7 +131,11 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runMonitorOnce(w http.ResponseWriter, r *http.Request) {
 	if err := s.monitorService.RunOnce(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, monitor.ErrRunAlreadyInProgress) {
+			writeError(w, http.StatusConflict, "monitor run already in progress")
+			return
+		}
+		writeInternalError(w, "failed to run monitor", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
@@ -126,7 +144,7 @@ func (s *Server) runMonitorOnce(w http.ResponseWriter, r *http.Request) {
 func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	items, err := s.certificateRepo.List(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to export matches", err)
 		return
 	}
 
@@ -134,7 +152,7 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="matched-certificates.csv"`)
 
 	if err := exporter.WriteMatchesCSV(w, items); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, "failed to write CSV export", err)
 		return
 	}
 }
@@ -149,9 +167,23 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func writeInternalError(w http.ResponseWriter, clientMessage string, internalErr error) {
+	log.Printf("%s: %v", clientMessage, internalErr)
+	writeError(w, http.StatusInternalServerError, clientMessage)
+}
+
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !s.isAllowedOrigin(origin) {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
@@ -162,4 +194,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) isAllowedOrigin(origin string) bool {
+	_, ok := s.allowedOrigins[origin]
+	return ok
 }

@@ -43,7 +43,7 @@ PostgreSQL matched_certificates
 - Dashboard showing monitor status and processing metrics.
 - Highlight matched certificates in the UI.
 - CSV export endpoint and frontend export button.
-- Configurable CT log URL, batch size, monitor interval, and database connection.
+- Configurable CT log URL, CT request timeout, CORS allowed origins, batch size, monitor interval, and database connection.
 
 ## Setup Instructions
 

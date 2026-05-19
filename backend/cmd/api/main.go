@@ -31,10 +31,10 @@ func main() {
 	keywordRepo := keywords.NewRepository(database)
 	certificateRepo := certificates.NewRepository(database)
 	stateRepo := monitor.NewStateRepository(database)
-	ctClient := monitor.NewCTClient(cfg.CTLogBaseURL)
+	ctClient := monitor.NewCTClientWithTimeout(cfg.CTLogBaseURL, cfg.CTRequestTimeout)
 
 	monitorService := monitor.NewService(ctClient, keywordRepo, certificateRepo, stateRepo, cfg.BatchSize, cfg.CTLogBaseURL)
-	apiServer := httpapi.NewServer(keywordRepo, certificateRepo, stateRepo, monitorService)
+	apiServer := httpapi.NewServer(keywordRepo, certificateRepo, stateRepo, monitorService, cfg.CORSAllowedOrigins)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
