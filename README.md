@@ -10,6 +10,13 @@ A full-stack Proof-of-Concept application that monitors recent Certificate Trans
 - Communication: REST APIs
 - Infrastructure: Docker Compose
 
+## Requirements (Tested / Expected)
+
+- Go `1.24.x` (see `backend/go.mod`, toolchain `go1.24.13`)
+- PostgreSQL `16` (local container uses `postgres:16-alpine`)
+- Node.js `20+` and npm `10+` (recommended for frontend tooling)
+- Docker Engine + Docker Compose v2 (for local Postgres)
+
 ## Architecture
 
 ```text
