@@ -32,6 +32,32 @@ Keyword Matcher
 PostgreSQL matched_certificates
 ```
 
+## Repository Structure
+
+```text
+.
+├─ backend/
+│  ├─ cmd/api/                  # App entrypoint, wiring, HTTP server startup
+│  └─ internal/
+│     ├─ certificates/          # Matched certificate model + persistence
+│     ├─ config/                # Environment config loading
+│     ├─ db/                    # DB connection + migration runner
+│     ├─ exporter/              # CSV export writer
+│     ├─ httpapi/               # REST routes + handlers + CORS middleware
+│     ├─ keywords/              # Keyword model + repository
+│     └─ monitor/               # CT client, monitor worker, state tracking
+├─ frontend/
+│  ├─ src/
+│  │  ├─ api/                   # API client wrapper
+│  │  ├─ components/            # Dashboard UI sections
+│  │  ├─ types/                 # Shared frontend data types
+│  │  └─ App.tsx                # Main dashboard composition
+├─ infra/docker-compose.yml     # Local PostgreSQL service
+├─ migrations/                  # SQL schema migrations
+├─ scripts/migrate.mjs          # Root migration helper script
+└─ package.json                 # Root scripts (migration commands)
+```
+
 ## Implemented Features
 
 - Add, remove, and view monitored keywords.
@@ -132,6 +158,10 @@ The frontend runs on:
 http://localhost:5173
 ```
 
+Frontend environment variable:
+
+- `VITE_API_BASE_URL` (optional): backend base URL (default `http://localhost:8080`).
+
 ## Useful API Endpoints
 
 ```text
@@ -143,6 +173,32 @@ GET    /api/matches
 GET    /api/status
 POST   /api/monitor/run-once
 GET    /api/export.csv
+```
+
+## Data Model (Current Schema)
+
+- `keywords`: monitored keyword values (unique).
+- `matched_certificates`: matched domain, issuer, validity window, matched keyword, and source log.
+- `monitor_state`: singleton row tracking last processed tree size, last cycle count, status, and timestamps.
+
+Uniqueness rule:
+
+- `matched_certificates` uses `UNIQUE(domain, matched_keyword, source_log)` to avoid duplicate findings for the same source log.
+
+## Testing and Verification
+
+Backend tests:
+
+```bash
+cd backend
+go test ./...
+```
+
+Frontend build verification:
+
+```bash
+cd frontend
+npm run build
 ```
 
 ## Design Decisions
